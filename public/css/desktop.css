@@ -1,0 +1,68 @@
+html,
+body {
+  font-family: sans-serif;
+}
+
+/* カードの設定 */
+.kanban-item .text-red {
+  color: crimson;
+}
+.kanban-item .text-white {
+  color: white;
+}
+
+.kanban-item .text-bold {
+  font-weight: bold;
+}
+.kanban-item.orange {
+  background-color: darkorange;
+}
+.kanban-item.red {
+  background-color: crimson;
+}
+.kanban-item.blue {
+  background-color: royalblue;
+}
+.kanban-item.green {
+  background-color: green;
+}
+.kanban-item.yellow {
+  background-color: yellow;
+}
+
+.kanban-item .item-body img {
+  width: 100%;
+}
+.kanban-item .item-body {
+  max-height: 240px;
+  overflow: hidden;
+}
+
+/* メッセージ表示欄 */
+#show-message {
+  margin: 0 1% 1rem 1%;
+  padding: 0.5rem;
+  color: white;
+  background-color: mediumturquoise;
+}
+
+/* カラムのタイトルの色 */
+.kanban-board header {
+  color: white;
+  background-color: gray;
+}
+.kanban-board header.orange {
+  background-color: darkorange;
+}
+.kanban-board header.red {
+  background-color: crimson;
+}
+.kanban-board header.blue {
+  background-color: royalblue;
+}
+.kanban-board header.green {
+  background-color: green;
+}
+.kanban-board header.yellow {
+  background-color: yellow;
+}

@@ -1,0 +1,28 @@
+{
+  "manifest_version": 1,
+  "version": "0.0.0",
+  "type": "APP",
+  "desktop": {
+    "js": ["js/jkanban.min.js", "js/desktop.js"],
+    "css": ["css/jkanban.min.css", "css/desktop.css"]
+  },
+  "icon": "image/icon.png",
+  "config": {
+    "html": "html/config.html",
+    "js": ["js/config.js"],
+    "css": [],
+    "required_params": ["fieldCode", "detail"]
+  },
+  "name": {
+    "ja": "【ＳＤＰ】カンバン　プラグイン",
+    "en": "kanban plug-in"
+  },
+  "description": {
+    "ja": "カードの移動によって状態の更新を行うプラグイン",
+    "en": "kanban Plug-in"
+  },
+  "homepage_url": {
+    "ja": "https://cybozu.dev/ja/kintone/tips/development/plugins/development-plugin/development-kintone-plugin/",
+    "en": "https://cybozu.dev/ja/kintone/tips/development/plugins/development-plugin/development-kintone-plugin/"
+  }
+}
