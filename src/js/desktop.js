@@ -1,46 +1,52 @@
 import { KintoneRestAPIClient } from '@kintone/rest-api-client';
 (function (PLUGIN_ID) {
   'use strict';
-  const client = new KintoneRestAPIClient();
-
-  //CONFIG情報取得
   const CONFIG = kintone.plugin.app.getConfig(PLUGIN_ID);
-  if (!CONFIG) {
-    return false;
-  }
-  const CONFIG_FIELDCODE = CONFIG.fieldCode;
-  const CONFIG_DETAIL = CONFIG.detail;
-  const CONFIG_DATE_FIELD = CONFIG.dateField;
-  let CONFIG_KANBAN = CONFIG.kanban;
+  if (!CONFIG) return;
 
-  if (!CONFIG_KANBAN) {
-    CONFIG_KANBAN = [
-      { title: '', boardColor: '' },
-      { title: '', boardColor: '' },
-      { title: '', boardColor: '' },
-      { title: '', boardColor: '' },
-      { title: '', boardColor: '' },
-    ];
-  } else {
-    CONFIG_KANBAN = JSON.parse(CONFIG['kanban']);
-  }
+  const client = new KintoneRestAPIClient();
+  const config = {
+    fieldCode: CONFIG.fieldCode ?? '',
+    detailField: CONFIG.detail ?? '',
+    dateField: CONFIG.dateField ?? '',
+    dateType: CONFIG.dateType ?? 'DATE',
+    textColorChange: CONFIG.textColorChange ?? 'false',
+    kanban: CONFIG.kanban ? JSON.parse(CONFIG.kanban) : Array.from({ length: 5 }, () => ({ title: '', boardColor: '' })), //初期値の配列を作成
+  };
 
   //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-  //★　レコード一覧画面の表示
+  // レコード一覧画面表示イベント
   //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-  kintone.events.on('app.record.index.show', async (event) => {
-    if (event.viewName != 'カンバン') {
-      return event;
-    }
+  kintone.events.on('app.record.index.show', (event) => {
+    if (event.viewName !== 'カンバン') return event;
 
     const records = event.records;
-    if (document.getElementById('kanban-canvas')) {
-      document.getElementById('kanban-canvas').innerHTML = '';
-    }
-    const kanbanObj = {}; //CONFIGからボード作成(カンバンの列)
-    for (const item of CONFIG_KANBAN) {
+    const canvas = document.getElementById('kanban-canvas');
+    if (!canvas) return event;
+    canvas.innerHTML = '';
+
+    const boards = buildBoards(config.kanban, records, config);
+    renderKanban(boards, client, config);
+
+    return event;
+  });
+
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  /** カンバン列データ生成
+   * @param {object} kanbanConfig CONFIG.kanban
+   * @param {object} records kintoneレコード
+   * @param {object} config CONFIG
+   * @returns
+   */
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  function buildBoards(kanbanConfig, records, config) {
+    const { fieldCode, detailField, dateField, dateType, textColorChange } = config;
+    const boards = {};
+
+    // カンバン列を初期化
+    for (const item of kanbanConfig) {
       if (item.title) {
-        kanbanObj[item.title] = {
+        boards[item.title] = {
           id: item.title,
           title: item.title,
           class: item.boardColor,
@@ -49,273 +55,305 @@ import { KintoneRestAPIClient } from '@kintone/rest-api-client';
       }
     }
 
-    //kintoneレコードから、main(カンバンの行、カード)作成
+    // レコードを各列に振り分け
     for (const rec of records) {
-      const 区分 = rec[CONFIG_FIELDCODE].value;
-      const detail = rec[CONFIG_DETAIL].value;
-      const recordid = rec.$id.value;
-      const revision = rec.$revision.value; //一覧を開いた時点のrevisionを退避
-      const record = JSON.stringify(rec);
-      let targetdate;
-      if (!CONFIG_DATE_FIELD) {
-        targetDate = '';
-      } else {
-        targetdate = rec[CONFIG_DATE_FIELD].value; //一覧を開いた時点の日付を退避
+      const category = rec[fieldCode]?.value;
+      let detail = rec[detailField]?.value;
+      if (textColorChange.toUpperCase() == 'TRUE' && isTextColorChange(rec[dateField]?.value, dateType)) {
+        detail = "<span class='text-red text-bold'>" + detail + '</span>';
       }
+      const recordId = rec.$id.value;
+      const revision = rec.$revision.value;
+      const localDateTime = convertUtcToLocalDatetimeInput(rec[dateField]?.value);
+      const targetDate = dateField ? localDateTime || '' : '';
 
-      const addItem = {
-        recordno: recordid,
-        revision: revision,
+      if (!boards[category]) continue;
+      boards[category].item.push({
+        recordno: recordId,
+        revision,
         title: detail,
-        record: record,
-        targetdate: targetdate,
-      };
-      if (kanbanObj.hasOwnProperty(区分)) {
-        kanbanObj[区分].item.push(addItem); //ドロップダウンの項目でCONFIGに設定されていない場合はカンバンを作成しない
-      }
+        record: JSON.stringify(rec),
+        targetdate: targetDate,
+      });
     }
-    const dataContent = [];
-    for (const item in kanbanObj) {
-      dataContent.push(kanbanObj[item]); //ボードを配列に変換
-    }
+    return Object.values(boards);
+  }
 
-    // ここで jKanban を実行する
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  /** jKanban表示設定
+   * @param {object} boards カンバンのボード
+   * @param {object} client KintoneRestAPIClient
+   * @param {object} config CONFIG
+   */
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  function renderKanban(boards, client, config) {
     const kanban = new jKanban({
-      element: '#kanban-canvas', // カンバンを表示する場所のID
-      boards: dataContent, // カンバンに表示されるカラムやカードのデータ
-      gutter: '16px', // カンバンの余白
-      widthBoard: '250px', // カラムの幅 (responsivePercentageの「true」設定により無視される)
-      responsivePercentage: true, // trueを選択時はカラム幅は％で指定され、gutterとwidthBoardの設定は不要
-      dragItems: true, // trueを選択時はカードをドラッグ可能
-      dragBoards: true, // カラムをドラッグ可能にするかどうか
+      element: '#kanban-canvas',
+      boards,
+      gutter: '16px',
+      responsivePercentage: true,
+      dragItems: true,
+      dragBoards: true,
 
-      //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-      //★　コールバック
-      //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-      click: function (el) {
-        // カードが左クリックされた時に実行
-        onKanbanItemClicked(el);
-      },
-      context: function (el, event) {
-        // カードが右クリックされた時に実行
-        onKanbanItemContext(el, event); // ★変更: 右クリック時の処理を追加
-      },
-      dragEl: function (el, source) {
-        // カードのドラッグが始まった時に実行
-      },
-      dragendEl: function (el) {
-        // カードがドラッグが終わった時に実行
-      },
-      dropEl: function (el, target, source, sibling) {
-        // カードがドロップされたときに実行
-        onKanbanItemDropped(el, target, source, sibling);
-      },
-      dragBoard: function (el, source) {
-        // カラムのドラッグを開始した時に実行
-      },
-      dragendBoard: function (el) {
-        // カラムのドラッグが終わった時に実行
-      },
-      buttonClick: function (el, boardId) {
-        // ボタンがクリックされた時に実行
-      },
+      click: (el) => handleCardClick(el),
+      context: (el, event) => handleCardContext(el, event, client, config),
+      dropEl: (el, target, source, sibling) => handleCardDrop(el, target, source, client, config),
     });
 
-    //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    //★　クリック時
-    //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    function onKanbanItemClicked(el) {
-      const recordId = el.dataset.recordno;
-      const appId = kintone.app.getId();
-
-      if (!recordId || !appId) {
-        showMessage('エラー: レコードIDまたはアプリIDが取得できませんでした。');
-        return;
-      }
-
-      const recordDetailUrl = `https://${location.host}/k/${appId}/show#record=${recordId}`; // kintoneレコード詳細画面のURLを生成
-      window.location.href = recordDetailUrl; // 既存タブで遷移
-      //window.open(recordDetailUrl, '_blank'); // 新しいタブで開く
-      showMessage('カード「' + el.innerText + '」が左クリックされました。レコード詳細画面に遷移します。');
-    }
-
-    //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    //★　カードのドロップ時
-    //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    async function onKanbanItemDropped(el, target, source, sibling) {
-      const sourceTitle = source.parentNode.querySelector('header').innerText; // 移動元カラムのタイトル
-      const sourceId = source.parentNode.dataset.id; // 移動元カラムのID
-      const targetTitle = target.parentNode.querySelector('header').innerText; // 移動先カラムのタイトル
-      const targetId = target.parentNode.dataset.id; // 移動先カラムのID
-      const sameColumn = sourceId === targetId ? true : false; // 同じカラム内の移動か、それとも異なるカラム間の移動かを判別
-
-      // カラム内 or カラム間の移動によってメッセージを変える
-      const alertMsg = sameColumn
-        ? 'カード「' + el.innerText + '」が、カラム『' + sourceTitle + '』内で移動しました。'
-        : 'カード「' + el.innerText + '」が、カラム『' + sourceTitle + '』からカラム『' + targetTitle + '』へ移動しました。';
-
-      showMessage(alertMsg); // メッセージを表示
-
-      const param = {
-        app: kintone.app.getId(),
-        id: el.dataset.recordno,
-        revision: el.dataset.revision,
-        record: {
-          [CONFIG_FIELDCODE]: { value: targetTitle },
-        },
-      };
-      try {
-        const res = await client.record.updateRecord(param);
-        el.dataset.revision = res.revision; // 更新成功後、退避していたrevisionを更新
-        showMessage(alertMsg + ' kintoneレコードを更新し、新しいリビジョン番号(' + res.revision + ')を設定しました。');
-      } catch (error) {
-        console.error('kintoneレコードの更新中にエラーが発生しました:', error);
-        showMessage(`kintoneレコードの更新に失敗しました。（エラー: ${error.message}）画面の表示とkintoneレコードの不整合を防ぐため、画面を再読み込みします。`);
-        const res = await kintone.showConfirmDialog({
-          title: 'kintoneレコード更新エラー',
-          body: `エラー: ${error.message}`,
-          showOkButton: true,
-          showCancelButton: false,
-          showCloseButton: false,
-        });
-        if (res == 'OK') {
-          location.reload();
-        }
-      }
-    }
-
-    //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    //★　カードの右クリック時 (コンテキストメニュー)
-    //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    async function onKanbanItemContext(el, event) {
-      if (!CONFIG_DATE_FIELD) {
-        return;
-      }
-      const recordId = el.dataset.recordno;
-      const revision = el.dataset.revision;
-      const targetdate = el.dataset.targetdate;
-      const cardTitle = el.innerText;
-
-      if (!recordId || !CONFIG_DATE_FIELD) {
-        showMessage('エラー: レコードIDまたは日付フィールド設定が取得できませんでした。');
-        return;
-      }
-      showMessage('カード「' + el.innerText + '」が右クリックされました。日付更新モーダルを開きます。');
-
-      try {
-        const input = createInputElement(); //ダイアログの内容を編集
-        input.value = targetdate; //初期値の日付
-
-        //ダイアログのイベント(ダイアログを閉じる前に実行される関数)
-        const dialogEventHandler = async (actionType) => {
-          if (String(actionType).toUpperCase() === 'OK') {
-            try {
-              const newDate = escapeHtml(input.value);
-              const param = {
-                app: kintone.app.getId(),
-                id: recordId,
-                revision: revision,
-                record: {
-                  [CONFIG_DATE_FIELD]: { value: newDate },
-                },
-              };
-
-              const resUpdate = await client.record.updateRecord(param);
-              const resGet = await client.record.getRecord({ app: kintone.app.getId(), id: recordId });
-              const updatedRecord = resGet.record;
-              // 成功メッセージ
-              const msg = `カード「${cardTitle}」の日付フィールド（${CONFIG_DATE_FIELD}）を「${newDate}」に更新しました。新しいリビジョン番号(${resUpdate.revision})を設定しました。カードの表示を更新しました。`;
-              showMessage(msg);
-
-              // .kanban-itemクラス要素の中から、data-recordnoが、recordIdの要素を取得する
-              const cardElement = document.querySelector(`.kanban-item[data-recordno="${recordId}"]`);
-              if (cardElement) {
-                cardElement.dataset.revision = resUpdate.revision; //最新のrevisionを退避
-                if (CONFIG_DATE_FIELD) {
-                  cardElement.dataset.targetdate = updatedRecord[CONFIG_DATE_FIELD].value; //最新の日付を退避
-                }
-                cardElement.innerText = updatedRecord[CONFIG_DETAIL].value; // カードの表示内容(innerText)を最新の値に更新(フィールドの最新の値に書き換えることで、date_formatや計算フィールドの結果を反映させる)
-              }
-            } catch (error) {
-              console.error('日付フィールドの更新中にエラーが発生しました:', error);
-              showMessage(`日付フィールドの更新に失敗しました。（エラー: ${error.message}）画面の表示とkintoneレコードの不整合を防ぐため、画面を再読み込みします。`);
-
-              const res = await kintone.showConfirmDialog({
-                title: 'kintoneレコード更新エラー(日付フィールド更新)',
-                body: `エラー: ${error.message}`,
-                showOkButton: true,
-                showCancelButton: false,
-                showCloseButton: false,
-              });
-              if (res == 'OK') {
-                location.reload();
-              }
-            }
-          }
-          return true;
-        };
-
-        const dialogConfig = {
-          title: '入力欄の表示',
-          body: input.parentElement, //createInputElementの戻り値の親要素
-          showOkButton: true,
-          okButtonText: '更新',
-          showCancelButton: true,
-          cancelButtonText: 'キャンセル',
-          showCloseButton: false,
-          beforeClose: dialogEventHandler, //イベント
-        };
-        const dialogPromise = await kintone.createDialog(dialogConfig);
-        const dialogResult = await dialogPromise.show();
-      } catch (error) {
-        console.error('kintoneレコードの取得中にエラーが発生しました:', error);
-        showMessage('レコード情報の取得に失敗しました。' + error.message);
-      }
-    }
-
-    function createInputElement() {
-      const wrapper = document.createElement('div');
-      wrapper.style.display = 'flex';
-      wrapper.style.alignItems = 'center';
-      wrapper.style.gap = '8px';
-      wrapper.style.width = '390px';
-
-      const label = document.createElement('span');
-      label.textContent = `${CONFIG_DATE_FIELD}を更新`;
-      label.style.padding = '10px';
-
-      const input = document.createElement('input');
-      input.type = 'date';
-      input.style.width = '160px';
-      input.style.padding = '6px';
-
-      wrapper.appendChild(label);
-      wrapper.appendChild(input);
-      return input;
-    }
-
-    //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    //★　サニタイズ処理
-    //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    function escapeHtml(htmlstr) {
-      return htmlstr.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
-
-    //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    //★　メッセージの表示
-    //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    function showMessage(msg) {
-      document.getElementById('show-message').innerHTML = msg;
-    }
-
-    // カードに data-class= 属性が設定されていたら、その値を取得してクラス名に追加(カンマ区切りで複数が設定されているので、配列に変換)
+    // スタイル適用（data-class対応）class属性→data-class→dataset.class→classListに追加
     document.querySelectorAll('.kanban-item').forEach((item) => {
       if (item.dataset.class) {
-        const arrayClass = item.dataset.class.split(',');
-        arrayClass.forEach((className) => {
-          item.classList.add(className);
-        });
+        item.dataset.class.split(',').forEach((cls) => item.classList.add(cls));
       }
     });
-  });
+  }
+
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  /** カードクリック → レコード詳細画面へ
+   * @param {object} el クリックした要素
+   * @returns
+   */
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  function handleCardClick(el) {
+    const recordId = el.dataset.recordno;
+    const appId = kintone.app.getId();
+    if (!recordId || !appId) return showMessage('レコードIDが取得できません。');
+
+    const url = `https://${location.host}/k/${appId}/show#record=${recordId}`;
+    window.location.href = url;
+  }
+
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  /** カードドラッグ＆ドロップ時 → レコード更新
+   * @param {object} el ドロップしたオブジェクト
+   * @param {object} target 移動先のカラム
+   * @param {object} source 移動元のカラム
+   * @param {object} client KintoneRestAPIClient
+   * @param {object} config CONFIG
+   */
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  async function handleCardDrop(el, target, source, client, config) {
+    const targetTitle = target.parentNode.querySelector('header').innerText;
+    const recordId = el.dataset.recordno;
+    const revision = el.dataset.revision;
+
+    try {
+      const param = {
+        app: kintone.app.getId(),
+        id: recordId,
+        revision,
+        record: { [config.fieldCode]: { value: targetTitle } },
+      };
+      const res = await client.record.updateRecord(param);
+      el.dataset.revision = res.revision;
+      showMessage(`カードを「${targetTitle}」へ移動しました。`);
+    } catch (err) {
+      await handleApiError('レコード更新エラー', err);
+    }
+  }
+
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  /** カード右クリック → 日付変更ダイアログ
+   * @param {object} el 右クリックした要素
+   * @param {object} event イベントオブジェクト
+   * @param {object} client KintoneRestAPIClient
+   * @param {object} config CONFIG
+   * @returns
+   */
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  async function handleCardContext(el, event, client, config) {
+    const { dateField, detailField, dateType, textColorChange } = config;
+    if (!dateField) return;
+
+    const recordId = el.dataset.recordno;
+    const revision = el.dataset.revision;
+    const currentDate = el.dataset.targetdate;
+
+    const input = createDateInput(dateField, currentDate, config);
+    const dialogConfig = {
+      title: `${dateField} の更新`,
+      body: input.parentElement,
+      showOkButton: true,
+      okButtonText: '更新',
+      showCancelButton: true,
+      cancelButtonText: 'キャンセル',
+      beforeClose: async (actionType) => {
+        if (actionType.toUpperCase() !== 'OK') return true;
+        try {
+          const newDate = convertLocalDatetimeInputToUtc(sanitize(input.value));
+          const param = {
+            app: kintone.app.getId(),
+            id: recordId,
+            revision,
+            record: { [dateField]: { value: newDate } },
+          };
+          const resUpdate = await client.record.updateRecord(param);
+          const resGet = await client.record.getRecord({ app: kintone.app.getId(), id: recordId });
+          const updated = resGet.record;
+
+          // DOM更新
+          el.dataset.revision = resUpdate.revision;
+          el.dataset.targetdate = convertUtcToLocalDatetimeInput(updated[dateField].value);
+          const span = document.createElement('span'); //クラスを設定するための要素追加
+          if (textColorChange.toUpperCase() == 'TRUE' && isTextColorChange(updated[dateField].value, dateType)) {
+            span.classList.add('text-red', 'text-bold'); //文字色を赤、太字にする
+          }
+          span.innerHTML = updated[detailField].value;
+          el.innerText = ''; //増殖防止
+          el.appendChild(span); //要素追加
+          //el.innerText = updated[detailField].value;
+          showMessage(`日付を「${newDate}」に更新しました。`);
+        } catch (err) {
+          await handleApiError('日付更新エラー', err);
+        }
+        return true;
+      },
+    };
+
+    const dialog = await kintone.createDialog(dialogConfig);
+    await dialog.show();
+  }
+
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  /** ダイアログの要素作成(タイトル、DatePicker)
+   * @param {string} labelText 更新するフィールド名
+   * @param {string} [initialValue=''] ダイアログの初期値
+   * @returns {object} wrapperの子要素の、DatePicker
+   */
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  function createDateInput(labelText, initialValue = '', config) {
+    const wrapper = document.createElement('div');
+    wrapper.style.display = 'flex';
+    wrapper.style.alignItems = 'center';
+    wrapper.style.gap = '8px';
+
+    const label = document.createElement('span');
+    label.textContent = `${labelText}を更新`;
+    label.style.padding = '10px';
+
+    const input = document.createElement('input');
+    if (config.dateType == 'DATETIME') {
+      input.type = 'datetime-local';
+    } else {
+      input.type = 'date';
+    }
+    input.value = initialValue;
+    input.style.padding = '6px';
+
+    wrapper.appendChild(label);
+    wrapper.appendChild(input);
+    return input;
+  }
+
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  //★　サニタイズ処理
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  function sanitize(str) {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  //★　メッセージの表示
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  function showMessage(msg) {
+    const el = document.getElementById('show-message');
+    if (el) el.innerHTML = sanitize(msg);
+  }
+
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  /** エラーに際にダイアログを表示する
+   * @param {string} title ダイアログのタイトル
+   * @param {object} error エラーオブジェクト
+   */
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  async function handleApiError(title, error) {
+    console.error(`${title}:`, error);
+    await kintone.showConfirmDialog({
+      title,
+      body: `エラー: ${error.message}`,
+      showOkButton: true,
+      showCancelButton: false,
+    });
+    location.reload();
+  }
+
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  /** UTC形式の文字列をdatetime-local表示用のローカルな日時文字列に変換する('2025-10-09T15:00:00Z'(UTC)->'2025-10-10T00:00:00'(JSTローカル))
+   * @param {string} utcString - UTC形式の日時文字列 ('YYYY-MM-DDTHH:mm:ssZ' または 'YYYY-MM-DDTHH:mm:ss+00:00' 形式)
+   * @returns {string} - datetime-localに設定可能な 'YYYY-MM-DDTHH:mm:ss' 形式の文字列
+   */
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  const convertUtcToLocalDatetimeInput = (utcString) => {
+    if (!utcString) return '';
+    const date = new Date(utcString); // DateオブジェクトはUTC文字列を与えると、それをローカル時刻に変換して保持する
+    // タイムゾーンの変換が失敗した場合 (例: 不正な形式)、Invalid Dateになる
+    if (isNaN(date.getTime())) {
+      console.error('不正な日時形式です:', utcString);
+      return '';
+    }
+
+    // ローカル年、月、日、時、分を取得(getFullYear() や getHours() などは、ブラウザのローカルタイムゾーンでの値を返す)
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hour = String(date.getHours()).padStart(2, '0');
+    const minute = String(date.getMinutes()).padStart(2, '0');
+    const second = String(date.getSeconds()).padStart(2, '0'); // 秒まで対応させる
+
+    return `${year}-${month}-${day}T${hour}:${minute}:${second}`; // datetime-localが期待する形式: YYYY-MM-DDTHH:mm:ss (タイムゾーン情報なし)
+  };
+
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  /** datetime-localから取得したローカル日時文字列をUTC形式に変換する('2025-10-10T00:00:00'(JSTローカル)->'2025-10-09T15:00:00Z'(UTC))
+   * @param {string} localString - datetime-localから取得した 'YYYY-MM-DDTHH:mm:ss' 形式の文字列
+   * @returns {string} - kintoneの日時フィールドにセット可能な 'YYYY-MM-DDTHH:mm:ssZ' 形式の文字列
+   */
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  const convertLocalDatetimeInputToUtc = (localString) => {
+    if (!localString) return '';
+    const date = new Date(localString); // ローカル日時文字列をDateオブジェクトに渡すと、ブラウザのローカルタイムゾーンの日時として解釈される
+
+    if (isNaN(date.getTime())) {
+      console.error('不正な日時形式です:', localString);
+      return '';
+    }
+
+    // toISOString() は、Dateオブジェクトが保持する時間をUTC形式のISO 8601文字列に変換する(ただし、秒以下(ミリ秒)が付加されるため、秒までで切り詰める)
+    // 例: '2025-10-09T15:00:00.000Z' -> '2025-10-09T15:00:00Z'
+    return date.toISOString().split('.')[0] + 'Z';
+  };
+
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  /** 文字色を赤に変える対象条件の判定
+   * @param {string} targetDate kintoneのフィールド(日付、日時)
+   * @param {string} dateType 日付フィールドの場合'DATE'、日時フィールドの場合'DATETIME'
+   * @returns {boolean} true：対象　false：対象ではない
+   */
+  //★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  const isTextColorChange = (targetDate, dateType) => {
+    if (!targetDate) {
+      return false;
+    }
+    let kintoneDate;
+    let currentDate;
+
+    const now = new Date();
+    if (dateType == 'DATE') {
+      kintoneDate = targetDate;
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0'); // 月は0から始まるため +1 する
+      const date = String(now.getDate()).padStart(2, '0');
+      currentDate = `${year}-${month}-${date}`; // 'YYYY-MM-DD' 形式の文字列を作成
+    } else {
+      const kintoneDateTime = new Date(targetDate);
+      kintoneDate = kintoneDateTime.getTime();
+      currentDate = now.getTime();
+    }
+
+    if (kintoneDate > currentDate) {
+      return false;
+    } else {
+      return true;
+    }
+  };
 })(kintone.$PLUGIN_ID);

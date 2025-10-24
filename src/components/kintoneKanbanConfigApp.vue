@@ -44,18 +44,26 @@
 
     <div class="setting-section">
       <h2 class="section-title">右クリックで変更可能な日付フィールド</h2>
-      <div v-if="hasErrorDate" class="error-message">
-        <p>{{ errorMessageDate }}</p>
+      <div v-if="hasErrorDateField" class="error-message">
+        <p>{{ errorMessageDateField }}</p>
       </div>
 
-      <div class="setting-item">
-        <label class="label-text">日付フィールド</label>
-        <select v-model="dateField">
-          <option value="">----- 選択してください -----</option>
-          <option v-for="itemDateField in optionDateField" :value="itemDateField.name" :key="itemDateField.id">
-            {{ itemDateField.name }}
-          </option>
-        </select>
+      <div class="setting-item-date">
+        <div class="date-field-select">
+          <label class="label-text">日付フィールド</label>
+          <select v-model="dateField">
+            <option value="">----- 選択してください -----</option>
+            <option v-for="itemDateField in optionDateField" :value="itemDateField.name" :key="itemDateField.id">
+              {{ itemDateField.name }}
+            </option>
+          </select>
+        </div>
+        <div class="date-text-color-checkbox">
+          <label class="label-text checkbox-label">
+            <input type="checkbox" v-model="textColorChange" />
+            日付が経過した場合に文字色を赤にする
+          </label>
+        </div>
       </div>
     </div>
 
@@ -213,6 +221,7 @@ const optionKanbanColor = ref([
 const fieldCode = ref(props.initialConfig.fieldCode);
 const detail = ref(props.initialConfig.detail);
 const dateField = ref(props.initialConfig.dateField);
+const textColorChange = ref(props.initialConfig.textColorChange);
 const kanban1Title = ref(props.initialConfig.kanban[0].title);
 const kanban1Color = ref(props.initialConfig.kanban[0].boardColor);
 const kanban2Title = ref(props.initialConfig.kanban[1].title);
@@ -279,7 +288,7 @@ onMounted(async () => {
     const selfAppFields = await getSelfFields(true);
     optionFieldCode.value = setAppDropDown(selfAppFields, ['DROP_DOWN']); //フィールドタイプで抽出
     optionDetail.value = setAppDropDown(selfAppFields, ['SINGLE_LINE_TEXT']); //フィールドタイプで抽出
-    optionDateField.value = setAppDropDown(selfAppFields, ['DATE']); //フィールドタイプで抽出
+    optionDateField.value = setAppDropDown(selfAppFields, ['DATE', 'DATETIME']); //フィールドタイプで抽出
     if (fieldCode.value) {
       optionKanbanTitle.value = await getKanbanTitle();
     }
@@ -379,6 +388,12 @@ const register = async () => {
     // 作成したビューIDを保存する
     //viewId.value = resp2.views[VIEW_NAME].id;
 
+    const targetDateType = optionDateField.value.find((item) => item.code == dateField.value);
+    let dateType = '';
+    if (targetDateType) {
+      dateType = targetDateType.type;
+    }
+
     const kanban = [
       { title: kanban1Title.value, boardColor: kanban1Color.value },
       { title: kanban2Title.value, boardColor: kanban2Color.value },
@@ -391,6 +406,8 @@ const register = async () => {
       fieldCode: fieldCode.value,
       detail: detail.value,
       dateField: dateField.value,
+      dateType: dateType,
+      textColorChange: textColorChange.value.toString(),
       kanban: JSON.stringify(kanban),
     };
 

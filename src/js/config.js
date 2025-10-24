@@ -10,6 +10,8 @@ import kintoneKanbanConfigApp from '../components/kintoneKanbanConfigApp.vue';
     fieldCode: config.fieldCode || '',
     detail: config.detail || '',
     dateField: config.dateField || '',
+    dateType: config.dateType || '',
+    textColorChange: config.textColorChange || 'false',
     kanban: config.kanban
       ? JSON.parse(config.kanban)
       : [
